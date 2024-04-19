@@ -1,0 +1,921 @@
+---
+title: "Lung primary cells RNAseq for Nick"
+author: "Marion Hardy"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true 
+    theme: spacelab 
+    highlight: monochrome
+editor_options: 
+  chunk_output_type: console
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, cache = TRUE, echo = FALSE, warning = F, cache.lazy = F)
+knitr::opts_chunk$set(fig.width=10, fig.height=15) 
+
+library(RColorBrewer)
+library(DESeq2)
+library(tidyverse)
+library(cowplot)
+library(biomaRt)
+library(ggrepel)
+library(pheatmap)
+library(xlsx)
+library(msigdbr)
+library(clusterProfiler)
+library(kableExtra)
+library(ggvenn)
+
+```
+
+```{r Data loading, include=FALSE}
+
+# this script assumes you have run the DESeq2 script
+
+dds = readRDS("./data_output/dds.Rds")
+
+```
+
+# Introduction
+
+Kenneth did RNAseq on lung primary cells.
+
+That data was aligned by the genome center, we have the preliminary
+reports:
+
+-   qc_report_genome_center.html : quality control of the alignment of
+    the data
+
+-   initial_report_genome_center: describes each sample (used for
+    annotations) and did a basic PCA + how many genes are differentially
+    expressed when comparing conditions. However, they don't give access
+    to the underlying code and they don't tell which thresholds of QC
+    and differential expression and which normalization method they
+    used.
+
+We want to know what pathways/processes changed after different
+treatments. We are specifically interested in seeing why pitavastatin
+treatment reduced SPREADs but did not when combined with cytokine
+(IL6... (ask Nick))
+
+So ultimately, what is up in cytokines vs control and down in
+cytokine+pitavastatin vs control?
+
+# PCA
+
+```{r, fig.height=6, fig.width=8}
+
+rld <- vst(dds)
+
+p1 <- plotPCA(rld,intgroup="treatment") + 
+  geom_text_repel(max.overlaps = 15,
+                  box.padding = 0.25,
+                  segment.color = 'grey50',
+                  fontface = "italic",
+                  label = rld$treatment)+
+  theme_bw()+
+  labs(title = 'PCA per treatment')
+
+p2 <- plotPCA(rld,intgroup="replicate") + 
+  geom_text_repel(max.overlaps = 15,
+                  box.padding = 0.25,
+                  segment.color = 'grey50',
+                  fontface = "italic",
+                  label = rld$replicate)+
+  theme_bw()+
+  labs(title = 'PCA per replicate')
+
+p1
+p2
+```
+
+First two PCs cover 96% of the variance in the data, yay that's *very*
+good
+
+Replicates don't cluster together so it looks like possible batches are
+behaving ok
+
+-   Cytokine_vs_Control
+
+-   Pitavastatin_vs_Control
+
+-   Pitava_Cyto_vs_Control
+
+# Gene expression programs changes between conditions
+
+## Cytokine vs Control
+
+```{r}
+
+res = results(dds, name = "treatment_Cytokine_vs_Control")
+res_tbl <- as_tibble(res, rownames="ensembl")
+
+# Import annotation file
+
+ensembl_to_geneName <- readRDS("./data/hsapiens_annotations_240419.rds") %>% 
+  distinct(ensembl, .keep_all = T)
+
+
+
+# Add gene names and entrez id to your results
+
+res_tbl <- res_tbl %>%
+  left_join(ensembl_to_geneName) %>%
+  arrange(padj) 
+
+write.csv(res_tbl,"./data_output/Cytokine_vs_Control/res_tbl.csv", row.names = T)
+c
+# Save the signif genes
+
+overexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange>=0.5) 
+underexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange<=-0.5)
+signif <- full_join(overexpr, underexpr)
+
+write.xlsx(overexpr, file="./data_output/Cytokine_vs_Control/Sign_genes.xlsx", sheetName="UP")
+write.xlsx(underexpr, file="./data_output/Cytokine_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
+write.xlsx(signif, file="./data_output/Cytokine_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
+
+```
+
+### Volcano plots
+
+```{r, fig.height=6, fig.width=8}
+
+p1 =
+res_tbl %>%
+  filter(!is.na(padj)) %>%
+  ggplot(aes(x = log2FoldChange, y = -log10(padj),
+             color = padj < 0.05 & abs(log2FoldChange) > 1, 
+             label = ifelse(padj<0.05&log2FoldChange>=1|
+                              padj<0.05&log2FoldChange<=-1,as.character(gene),''))) +
+  scale_colour_manual(values = c("gray", "firebrick3")) +
+  labs(col="Significantly expressed")+
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = -log10(0.05)) +
+  geom_vline(xintercept = 1) +
+  geom_vline(xintercept = -1)+
+  geom_text_repel(max.overlaps = 15,
+                  box.padding = 0.25,
+                  segment.color = 'grey50',
+                  fontface = "italic")+
+  labs(title = "Cytokine_vs_Control")+
+  theme_bw()
+
+print(p1)
+
+ggsave("./figures/Cytokine_vs_Control/volcanoplot.png", last_plot(), dpi= 500, width = 8, height = 7)
+
+```
+
+### GSEA analysis (logFc)
+
+```{r}
+
+# MsigDb
+
+hsa_GOBP_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C5",
+  subcategory = "GO:BP")
+
+hsa_GOMF_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C5",
+  subcategory = "GO:MF")
+
+hsa_GOCC_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C5",
+  subcategory = "GO:CC") 
+
+hsa_reactome_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C2",
+  subcategory = "CP:REACTOME") # for reactome collection
+
+set.seed(054057) # for reproducibility
+
+```
+
+```{r}
+
+temp =
+  res_tbl %>% 
+  drop_na()
+
+ordered_genes_fc <- temp$log2FoldChange 
+names(ordered_genes_fc) <- temp$gene
+ordered_genes_fc <- sort(ordered_genes_fc, decreasing = T)
+# ordered_genes_fc = ordered_genes_fc[!is.na(names(ordered_genes_fc))]
+
+```
+
+#### GOBP
+
+```{r, fig.height=9, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA GO:BP Cytokine vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/Cytokine_vs_Control/GOBPgsea.svg", dpi = 300,
+       height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/Cytokine_vs_Control/GOBPgsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+  select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+#### GOMF
+
+```{r, fig.height=9, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOMF_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA GO:MF Cytokine vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/Cytokine_vs_Control/GOMFgsea.svg", dpi = 300,
+       height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/Cytokine_vs_Control/GOMFgsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+
+```
+
+#### Reactome
+
+```{r, fig.height=8, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_reactome_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA Reactome  Cytokine vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/Cytokine_vs_Control/Reactomegsea.svg", dpi = 300, height = 8, width = 8, device = "svg")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+write.xlsx(gsea_results, "./data_output/Cytokine_vs_Control/Reactomegsea.xlsx")
+
+```
+
+## Pitavastatin vs Control
+
+```{r}
+
+res = results(dds, name = "treatment_Pitavastatin_vs_Control")
+res_tbl <- as_tibble(res, rownames="ensembl")
+
+# Add gene names and entrez id to your results
+
+res_tbl <- res_tbl %>%
+  left_join(ensembl_to_geneName) %>%
+  arrange(padj) 
+
+write.csv(res_tbl,"./data_output/Pitavastatin_vs_Control/res_tbl.csv", row.names = T)
+
+# Save the signif genes
+
+overexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange>=0.5) 
+underexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange<=-0.5)
+signif <- full_join(overexpr, underexpr)
+
+write.xlsx(overexpr, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="UP")
+write.xlsx(underexpr, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
+write.xlsx(signif, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
+
+```
+
+### Volcano plots
+
+```{r, fig.height=6, fig.width=8}
+
+p2 =
+res_tbl %>%
+  filter(!is.na(padj)) %>%
+  ggplot(aes(x = log2FoldChange, y = -log10(padj),
+             color = padj < 0.05 & abs(log2FoldChange) > 1, 
+             label = ifelse(padj<0.05&log2FoldChange>=1|
+                              padj<0.05&log2FoldChange<=-1,as.character(gene),''))) +
+  scale_colour_manual(values = c("gray", "firebrick3")) +
+  labs(col="Significantly expressed")+
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = -log10(0.05)) +
+  geom_vline(xintercept = 1) +
+  geom_vline(xintercept = -1)+
+  geom_text_repel(max.overlaps = 15,
+                  box.padding = 0.25,
+                  segment.color = 'grey50',
+                  fontface = "italic")+
+  labs(title = "Pitavastatin_vs_Control")+
+  theme_bw()
+
+print(p1)
+
+ggsave("./figures/Pitavastatin_vs_Control/volcanoplot.png", last_plot(), dpi= 500, width = 8, height = 7)
+
+```
+
+### GSEA analysis (logFc)
+
+```{r}
+
+temp =
+  res_tbl %>% 
+  drop_na()
+
+ordered_genes_fc <- temp$log2FoldChange 
+names(ordered_genes_fc) <- temp$gene
+ordered_genes_fc <- sort(ordered_genes_fc, decreasing = T)
+
+```
+
+#### GOBP
+
+```{r, fig.height=9, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA GO:BP Pitavastatin vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/Pitavastatin_vs_Control/GOBPgsea.svg", dpi = 300,
+       height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/Pitavastatin_vs_Control/GOBPgsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+#### GOMF
+
+```{r, fig.height=9, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOMF_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA GO:MF Pitavastatin vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/Pitavastatin_vs_Control/GOMFgsea.svg", dpi = 300,
+       height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/Pitavastatin_vs_Control/GOMFgsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+```
+
+#### Reactome
+
+```{r, fig.height=8, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_reactome_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA Reactome Pitavastatin vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/Pitavastatin_vs_Control/Reactomegsea.svg", dpi = 300, height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/Pitavastatin_vs_Control/Reactomegsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+## Cytokine + Pitavastatin vs Control
+
+```{r}
+
+res = results(dds, name = "treatment_Pitava_Cyto_vs_Control")
+res_tbl <- as_tibble(res, rownames="ensembl")
+
+# Add gene names and entrez id to your results
+
+res_tbl <- res_tbl %>%
+  left_join(ensembl_to_geneName) %>%
+  arrange(padj) 
+
+write.csv(res_tbl,"./data_output/PitavaCyto_vs_Control/res_tbl.csv", row.names = T)
+
+# Save the signif genes
+
+overexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange>=0.5) 
+underexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange<=-0.5)
+signif <- full_join(overexpr, underexpr)
+
+write.xlsx(overexpr, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="UP")
+write.xlsx(underexpr, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
+write.xlsx(signif, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
+
+```
+
+### Volcano plots
+
+```{r, fig.height=6, fig.width=8}
+
+p3 =
+res_tbl %>%
+  filter(!is.na(padj)) %>%
+  ggplot(aes(x = log2FoldChange, y = -log10(padj),
+             color = padj < 0.05 & abs(log2FoldChange) > 1, 
+             label = ifelse(padj<0.05&log2FoldChange>=1|
+                              padj<0.05&log2FoldChange<=-1,as.character(gene),''))) +
+  scale_colour_manual(values = c("gray", "firebrick3")) +
+  labs(col="Significantly expressed")+
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = -log10(0.05)) +
+  geom_vline(xintercept = 1) +
+  geom_vline(xintercept = -1)+
+  geom_text_repel(max.overlaps = 15,
+                  box.padding = 0.25,
+                  segment.color = 'grey50',
+                  fontface = "italic")+
+  labs(title = "PitavaCyto_vs_Control")+
+  theme_bw()
+
+print(p3)
+
+ggsave("./figures/PitavaCyto_vs_Control/volcanoplot.png", last_plot(), dpi= 500, width = 8, height = 7)
+
+```
+
+### GSEA analysis (logFc)
+
+```{r}
+
+temp =
+  res_tbl %>% 
+  drop_na()
+
+ordered_genes_fc <- temp$log2FoldChange 
+names(ordered_genes_fc) <- temp$gene
+ordered_genes_fc <- sort(ordered_genes_fc, decreasing = T)
+
+```
+
+#### GOBP
+
+```{r, fig.height=9, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA GO:BP Piva + Cyto vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/PitavaCyto_vs_Control/GOBPgsea.svg", dpi = 300,
+       height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/Pitavastatin_vs_Control/GOBPgsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+#### GOMF
+
+```{r, fig.height=9, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOMF_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA GO:MF Piva + Cyto vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/PitavaCyto_vs_Control/GOMFgsea.svg", dpi = 300,
+       height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/PitavaCyto_vs_Control/GOMFgsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+```
+
+#### Reactome
+
+```{r, fig.height=8, fig.width=7}
+
+gsea_results <- GSEA(
+  geneList = ordered_genes_fc, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_reactome_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+dotplot(gsea_results, x = "NES", showCategory = 20, font.size = 7)+ 
+  labs(title = "GSEA",
+              subtitle = "GSEA Reactome Piva + Cyto vs Control")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/PitavaCyto_vs_Control/Reactomegsea.svg", dpi = 300, height = 8, width = 8, device = "svg")
+
+write.xlsx(gsea_results, "./data_output/PitavaCyto_vs_Control/Reactomegsea.xlsx")
+
+gsea_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+## All volcano plots
+
+```{r, fig.height=8, fig.width=24}
+plot_grid(p1, p2, p3, ncol = 3, nrow = 1, align = "hv")
+```
+
+# What is in common and what is specific to each conditions?
+
+```{r include=FALSE}
+
+# this script assumes you have run the DESeq2 script
+# kinda important to look at it because I've used a non standard pipeline
+# to normalize the data
+
+CytCo = read.csv("./data_output/Cytokine_vs_Control/res_tbl.csv")
+PivCo = read.csv("./data_output/Pitavastatin_vs_Control/res_tbl.csv")
+PivCytCo = read.csv("./data_output/PitavaCyto_vs_Control/res_tbl.csv")
+
+```
+
+## Venn diagram
+
+```{r, fig.width = 4, fig.height=4}
+
+cytco = 
+  CytCo %>% 
+    filter(padj<=0.05, abs(log2FoldChange)>=0.5)
+
+pivcytco = 
+  PivCytCo %>% 
+    filter(padj<=0.05, abs(log2FoldChange)>=0.5)
+
+pivco = 
+  PivCo %>% 
+    filter(padj<=0.05, abs(log2FoldChange)>=0.5)
+
+venn =
+  list(
+    "cytco" = cytco$gene,
+    "pivcytco" = pivcytco$gene,
+    "pivco" = pivco$gene
+  )
+
+ggvenn(
+  venn, 
+  fill_color = c("#0073C2FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 3
+  )
+
+```
+
+Now let's look at the 1025 + 356 (1381) genes that are common to
+cytokines and cyto+statin treatments. The hope is to find some that are
+up in cytokine and down in statin+cyto vs ctrl. There are 43 such genes.
+
+```{r}
+
+# common = setdiff(intersect(cytco$gene, pivcytco$gene), pivco$gene)
+
+common = intersect(cytco$gene, pivcytco$gene)
+
+goi = # Up in cyto vs ctrl
+  cytco %>% 
+  filter(gene %in% common, log2FoldChange > 0) %>% 
+  select(ensembl, log2FoldChange,protID, gene, description, padj) 
+
+downpivcytco = # Down in pivcytco
+  pivcytco %>%
+  filter(log2FoldChange < 0, padj<0.05)
+
+goi =
+  goi %>%
+  filter(gene %in% downpivcytco$gene)
+
+goi %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+-   ENSG00000268628: lncRNA : mutations involved in cancer
+    <https://ngdc.cncb.ac.cn/lncbook/gene?geneid=HSALNG0129015#transcript_information>
+    and GWAS with high density lipoprotein cholesterol measurements.
+-   ENSG00000280219: TEC means To be Experimentally Confirmed
+-   
+
+## Highlight on volcano plot
+
+```{r, fig.width=8, fig.height=6}
+
+# Cytokine
+
+highlight = CytCo %>% filter(gene%in%goi$gene)
+
+p4 =
+p1+
+  geom_point(data= highlight, 
+             aes(x=log2FoldChange,y=-log10(padj)), 
+             color='blue',
+             size=0.5)+
+  geom_text_repel(data = highlight, size = 3, segment.color = "blue",
+                  max.overlaps = 30, min.segment.length = 0, color = "blue",
+                  box.padding = 0.5)+
+  theme(legend.title= element_blank())
+
+# Piv
+
+highlight = PivCo %>% filter(gene%in%goi$gene)
+
+p5 = 
+p2 +
+  geom_point(data= highlight, 
+             aes(x=log2FoldChange,y=-log10(padj)), 
+             color='blue',
+             size=0.5)+
+  geom_text_repel(data = highlight, size = 3, segment.color = "blue",
+                  max.overlaps = 30, min.segment.length = 0, color = "blue",
+                  box.padding = 0.5)+
+  theme(legend.title= element_blank())
+
+# Cytokine vs Piv
+
+highlight = PivCytCo %>% filter(gene%in%goi$gene)
+
+p6 =
+p3+
+  geom_point(data= highlight, 
+             aes(x=log2FoldChange,y=-log10(padj)), 
+             color='blue',
+             size=0.5)+
+  geom_text_repel(data = highlight, size = 3, segment.color = "blue",
+                  max.overlaps = 30, min.segment.length = 0, color = "blue",
+                  box.padding = 0.5)+
+  theme(legend.title= element_blank())
+
+
+```
+
+```{r, fig.height=5, fig.width=15}
+plot_grid(p4, p5, p6, ncol = 3, nrow = 1, align = "hv")
+```
+
+## Heatmap
+
+```{r, fig.width=10, fig.height=12}
+
+reslog = rlog(dds, blind = FALSE)
+mat = assay(reslog)
+
+coldata = as.data.frame(colData(reslog))
+colnames(mat) = rownames(coldata)
+
+# Do the scaling to get z-scores
+
+basemean = rowMeans(mat)
+mats = t(apply(mat, 1, scale))
+colnames(mats) = colnames(mat)
+
+mats = mats[goi$ensembl,]
+rownames(mats) = goi$gene
+colnames(mats) = coldata$treatment
+
+pheatmap(mats, main="43 candidate genes", 
+         cluster_cols=T,border_color=NA, 
+         legend = T,
+         fontsize_row=7,
+         color = rev(brewer.pal(9,"RdBu")))
+
+```
+
+## Enrichment analysis (Over-representation analysis)
+
+## GOBP
+
+```{r, fig.height=9, fig.width=7}
+
+up = goi$gene
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "43 genes of interest suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_103_BP.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+```
+
+## GOMF
+
+```{r, fig.height=3, fig.width=7}
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOMF_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "43 genes of interest suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_103_MF.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+```
+
+```{r}
+sessionInfo()
+```
