@@ -21,15 +21,15 @@ So, ultimately, what is pitavastatin suppressing?
 
 ## Primary cell report 1
 
-## PCA of the 12 samples
+### PCA of the 12 samples
 
 ![image](Github_figures/pca.png)
 
-## Volcano plots of DEG all conditions vs control
+### Volcano plots of DEG all conditions vs control
 
 ![image](Github_figures/volcanoplots.png)
 
-## Venn diagram of the shared/distinct DEG between conditions (vs control)
+### Venn diagram of the shared/distinct DEG between conditions (vs control)
 
 ![image](Github_figures/venn.png)
 
