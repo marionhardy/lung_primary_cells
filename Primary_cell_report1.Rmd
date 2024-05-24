@@ -52,18 +52,12 @@ reports:
 
 -   initial_report_genome_center: describes each sample (used for
     annotations) and did a basic PCA + how many genes are differentially
-    expressed when comparing conditions. However, they don't give access
-    to the underlying code and they don't tell which thresholds of QC
-    and differential expression and which normalization method they
-    used.
-
+    expressed when comparing conditions. 
 We want to know what pathways/processes changed after different
-treatments. We are specifically interested in seeing why pitavastatin
-treatment reduced SPREADs but did not when combined with cytokine
-(IL6... (ask Nick))
+treatments. We are specifically interested in seeing why cytokines (IL5,
+IL13, ILxx) induce SPREADS but do not when coupled with pitavastatin.
 
-So ultimately, what is up in cytokines vs control and down in
-cytokine+pitavastatin vs control?
+So ultimately, what is pitavastatin suppressing?
 
 # PCA
 
@@ -119,8 +113,6 @@ res_tbl <- as_tibble(res, rownames="ensembl")
 ensembl_to_geneName <- readRDS("./data/hsapiens_annotations_240419.rds") %>% 
   distinct(ensembl, .keep_all = T)
 
-
-
 # Add gene names and entrez id to your results
 
 res_tbl <- res_tbl %>%
@@ -128,7 +120,7 @@ res_tbl <- res_tbl %>%
   arrange(padj) 
 
 write.csv(res_tbl,"./data_output/Cytokine_vs_Control/res_tbl.csv", row.names = T)
-c
+
 # Save the signif genes
 
 overexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange>=0.5) 
@@ -138,6 +130,7 @@ signif <- full_join(overexpr, underexpr)
 write.xlsx(overexpr, file="./data_output/Cytokine_vs_Control/Sign_genes.xlsx", sheetName="UP")
 write.xlsx(underexpr, file="./data_output/Cytokine_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
 write.xlsx(signif, file="./data_output/Cytokine_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
+
 
 ```
 
@@ -168,6 +161,15 @@ res_tbl %>%
 print(p1)
 
 ggsave("./figures/Cytokine_vs_Control/volcanoplot.png", last_plot(), dpi= 500, width = 8, height = 7)
+
+
+# put the table in the document
+
+res_tbl %>% 
+  filter(padj<=0.05 & abs(abs(log2FoldChange>=1))) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
 
 ```
 
@@ -346,9 +348,9 @@ overexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange>=0.5)
 underexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange<=-0.5)
 signif <- full_join(overexpr, underexpr)
 
-write.xlsx(overexpr, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="UP")
-write.xlsx(underexpr, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
-write.xlsx(signif, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
+# write.xlsx(overexpr, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="UP")
+# write.xlsx(underexpr, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
+# write.xlsx(signif, file="./data_output/Pitavastatin_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
 
 ```
 
@@ -376,9 +378,18 @@ res_tbl %>%
   labs(title = "Pitavastatin_vs_Control")+
   theme_bw()
 
-print(p1)
+print(p2)
 
 ggsave("./figures/Pitavastatin_vs_Control/volcanoplot.png", last_plot(), dpi= 500, width = 8, height = 7)
+
+
+# put the table in the document
+
+res_tbl %>% 
+  filter(padj<=0.05 & abs(abs(log2FoldChange>=1))) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
 
 ```
 
@@ -526,9 +537,9 @@ overexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange>=0.5)
 underexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange<=-0.5)
 signif <- full_join(overexpr, underexpr)
 
-write.xlsx(overexpr, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="UP")
-write.xlsx(underexpr, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
-write.xlsx(signif, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
+# write.xlsx(overexpr, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="UP")
+# write.xlsx(underexpr, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
+# write.xlsx(signif, file="./data_output/PitavaCyto_vs_Control/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
 
 ```
 
@@ -559,6 +570,15 @@ res_tbl %>%
 print(p3)
 
 ggsave("./figures/PitavaCyto_vs_Control/volcanoplot.png", last_plot(), dpi= 500, width = 8, height = 7)
+
+
+# put the table in the document
+
+res_tbl %>% 
+  filter(padj<=0.05 & abs(abs(log2FoldChange>=1))) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
 
 ```
 
@@ -696,8 +716,6 @@ plot_grid(p1, p2, p3, ncol = 3, nrow = 1, align = "hv")
 ```{r include=FALSE}
 
 # this script assumes you have run the DESeq2 script
-# kinda important to look at it because I've used a non standard pipeline
-# to normalize the data
 
 CytCo = read.csv("./data_output/Cytokine_vs_Control/res_tbl.csv")
 PivCo = read.csv("./data_output/Pitavastatin_vs_Control/res_tbl.csv")
@@ -707,19 +725,22 @@ PivCytCo = read.csv("./data_output/PitavaCyto_vs_Control/res_tbl.csv")
 
 ## Venn diagram
 
+Compare all the differentially expressed genes vs control to each other. 
+This plot allows us to know which genes can be found to be perturbed vs control in all conditions as well as those that are specific to one condition or another.
+
 ```{r, fig.width = 4, fig.height=4}
 
 cytco = 
   CytCo %>% 
-    filter(padj<=0.05, abs(log2FoldChange)>=0.5)
+    filter(padj<=0.05, abs(log2FoldChange)>=0)
 
 pivcytco = 
   PivCytCo %>% 
-    filter(padj<=0.05, abs(log2FoldChange)>=0.5)
+    filter(padj<=0.05, abs(log2FoldChange)>=0)
 
 pivco = 
   PivCo %>% 
-    filter(padj<=0.05, abs(log2FoldChange)>=0.5)
+    filter(padj<=0.05, abs(log2FoldChange)>=0)
 
 venn =
   list(
@@ -736,9 +757,11 @@ ggvenn(
 
 ```
 
-Now let's look at the 1025 + 356 (1381) genes that are common to
+## UP in cytokine and DOWN in Cyt + Pit
+
+Now let's look at the 1878 + 1402 (3280) genes that are common to
 cytokines and cyto+statin treatments. The hope is to find some that are
-up in cytokine and down in statin+cyto vs ctrl. There are 43 such genes.
+up in cytokine and down in statin+cyto vs ctrl. There are 11 such genes.
 
 ```{r}
 
@@ -757,7 +780,7 @@ downpivcytco = # Down in pivcytco
 
 goi =
   goi %>%
-  filter(gene %in% downpivcytco$gene)
+  filter(ensembl %in% downpivcytco$ensembl)
 
 goi %>% 
   kable()%>% 
@@ -766,19 +789,14 @@ goi %>%
 
 ```
 
--   ENSG00000268628: lncRNA : mutations involved in cancer
-    <https://ngdc.cncb.ac.cn/lncbook/gene?geneid=HSALNG0129015#transcript_information>
-    and GWAS with high density lipoprotein cholesterol measurements.
--   ENSG00000280219: TEC means To be Experimentally Confirmed
--   
 
-## Highlight on volcano plot
+### Highlight on volcano plot
 
 ```{r, fig.width=8, fig.height=6}
 
 # Cytokine
 
-highlight = CytCo %>% filter(gene%in%goi$gene)
+highlight = CytCo %>% filter(ensembl%in%goi$ensembl)
 
 p4 =
 p1+
@@ -793,7 +811,7 @@ p1+
 
 # Piv
 
-highlight = PivCo %>% filter(gene%in%goi$gene)
+highlight = PivCo %>% filter(ensembl%in%goi$ensembl)
 
 p5 = 
 p2 +
@@ -808,7 +826,7 @@ p2 +
 
 # Cytokine vs Piv
 
-highlight = PivCytCo %>% filter(gene%in%goi$gene)
+highlight = PivCytCo %>% filter(ensembl%in%goi$ensembl)
 
 p6 =
 p3+
@@ -828,9 +846,9 @@ p3+
 plot_grid(p4, p5, p6, ncol = 3, nrow = 1, align = "hv")
 ```
 
-## Heatmap
+### Heatmap
 
-```{r, fig.width=10, fig.height=12}
+```{r, fig.width=5, fig.height=6}
 
 reslog = rlog(dds, blind = FALSE)
 mat = assay(reslog)
@@ -848,7 +866,7 @@ mats = mats[goi$ensembl,]
 rownames(mats) = goi$gene
 colnames(mats) = coldata$treatment
 
-pheatmap(mats, main="43 candidate genes", 
+pheatmap(mats, main="11 candidate genes", 
          cluster_cols=T,border_color=NA, 
          legend = T,
          fontsize_row=7,
@@ -856,9 +874,9 @@ pheatmap(mats, main="43 candidate genes",
 
 ```
 
-## Enrichment analysis (Over-representation analysis)
+### Enrichment analysis (Over-representation analysis)
 
-## GOBP
+#### GOBP
 
 ```{r, fig.height=9, fig.width=7}
 
@@ -878,19 +896,19 @@ ora_results <- enricher(
 ora_results %>% 
   dotplot(showCategory = 30, font.size = 7)+ 
   labs(title = "Over-representation analysis GO:BP",
-              subtitle = "43 genes of interest suppressing SPREADS")+
+              subtitle = "11 genes of interest suppressing SPREADS")+
    theme(axis.line = element_line(color='black'),
     plot.background = element_blank(),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank())
 
-ggsave(plot = last_plot(), "./figures/ORA_103_BP.svg", dpi = 300,
+ggsave(plot = last_plot(), "./figures/ORA_11_BP.svg", dpi = 300,
        height = 5, width = 5, device = "svg")
 ```
 
-## GOMF
+#### GOMF
 
-```{r, fig.height=3, fig.width=7}
+```{r, fig.height=8, fig.width=7}
 
 ora_results <- enricher(
   gene = up, 
@@ -906,14 +924,236 @@ ora_results <- enricher(
 ora_results %>% 
   dotplot(showCategory = 30, font.size = 7)+ 
   labs(title = "Over-representation analysis GO:BP",
-              subtitle = "43 genes of interest suppressing SPREADS")+
+              subtitle = "11 genes of interest suppressing SPREADS")+
    theme(axis.line = element_line(color='black'),
     plot.background = element_blank(),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank())
 
-ggsave(plot = last_plot(), "./figures/ORA_103_MF.svg", dpi = 300,
+ggsave(plot = last_plot(), "./figures/ORA_11_MF.svg", dpi = 300,
        height = 5, width = 5, device = "svg")
+```
+
+## UP in cytokine and UNCHANGED in Cyt + Piv
+
+There are 377 such genes.
+
+```{r}
+
+common = setdiff(cytco$ensembl, pivcytco$ensembl) # get the cyt-specific genes vs pivcyt
+common = setdiff(common, pivco$ensembl) # remove the genes in common with pivco
+
+goi = # Up in cyto vs ctrl
+  cytco %>% 
+  filter(ensembl %in% common, log2FoldChange > 0) %>% 
+  select(ensembl, log2FoldChange,protID, gene, description, padj) 
+
+goi %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+There are 377 candidate genes for the suppression of SPREADS through pitavastatin treatment.
+
+### Highlight on volcano plot
+
+```{r, fig.width=8, fig.height=6}
+
+# Cytokine
+
+highlight = CytCo %>% filter(ensembl%in%goi$ensembl)
+
+p4 =
+p1+
+  geom_point(data= highlight, 
+             aes(x=log2FoldChange,y=-log10(padj)), 
+             color='blue',
+             size=0.5)+
+  geom_text_repel(data = highlight, size = 3, segment.color = "blue",
+                  max.overlaps = 30, min.segment.length = 0, color = "blue",
+                  box.padding = 0.5)+
+  theme(legend.title= element_blank())
+
+# Piv
+
+highlight = PivCo %>% filter(ensembl%in%goi$ensembl)
+
+p5 = 
+p2 +
+  geom_point(data= highlight, 
+             aes(x=log2FoldChange,y=-log10(padj)), 
+             color='blue',
+             size=0.5)+
+  geom_text_repel(data = highlight, size = 3, segment.color = "blue",
+                  max.overlaps = 30, min.segment.length = 0, color = "blue",
+                  box.padding = 0.5)+
+  theme(legend.title= element_blank())
+
+# Cytokine vs Piv
+
+highlight = PivCytCo %>% filter(ensembl%in%goi$ensembl)
+
+p6 =
+p3+
+  geom_point(data= highlight, 
+             aes(x=log2FoldChange,y=-log10(padj)), 
+             color='blue',
+             size=0.5)+
+  geom_text_repel(data = highlight, size = 3, segment.color = "blue",
+                  max.overlaps = 30, min.segment.length = 0, color = "blue",
+                  box.padding = 0.5)+
+  theme(legend.title= element_blank())
+
+
+```
+
+```{r, fig.height=5, fig.width=15}
+plot_grid(p4, p5, p6, ncol = 3, nrow = 1, align = "hv")
+```
+
+### Heatmap
+
+```{r, fig.width=6, fig.height=10}
+
+reslog = rlog(dds, blind = FALSE)
+mat = assay(reslog)
+
+coldata = as.data.frame(colData(reslog))
+colnames(mat) = rownames(coldata)
+
+# Do the scaling to get z-scores
+
+basemean = rowMeans(mat)
+mats = t(apply(mat, 1, scale))
+colnames(mats) = colnames(mat)
+
+mats = mats[goi$ensembl,]
+rownames(mats) = goi$gene
+colnames(mats) = coldata$treatment
+
+pheatmap(mats, main="377 candidate genes", 
+         cluster_cols=T,border_color=NA, 
+         legend = T,
+         fontsize_row=7,
+         color = rev(brewer.pal(9,"RdBu")))
+
+```
+
+### Subselect genes per consistency in replicates?
+
+```{r}
+
+```
+
+
+### Enrichment analysis (Over-representation analysis)
+
+#### GOBP
+
+```{r, fig.height=6, fig.width=7}
+
+up = goi$gene
+
+ora_results <- enricher(
+  gene = up, 
+  universe = cytco$gene,
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "377 genes of interest suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_377_BP.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+
+ora_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+```
+
+#### GOMF
+
+```{r, fig.height=4, fig.width=7}
+
+ora_results <- enricher(
+  gene = up, 
+  universe = cytco$gene,
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOMF_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "377 genes of interest suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_377_MF.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+
+ora_results %>% 
+  as_tibble() %>% 
+    select(!c(leading_edge,Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+```
+
+## Cytokine vs Cytokine + Pitavastatin -> Added much later, probably not relevant because not compared to ctrl treatment
+
+```{r}
+
+res = results(dds, name = "treatment_Cytokine_vs_Pitava_Cyto")
+res_tbl <- as_tibble(res, rownames="ensembl")
+
+# Import annotation file
+
+ensembl_to_geneName <- readRDS("./data/hsapiens_annotations_240419.rds") %>% 
+  distinct(ensembl, .keep_all = T)
+
+# Add gene names and entrez id to your results
+
+res_tbl <- res_tbl %>%
+  left_join(ensembl_to_geneName) %>%
+  arrange(padj) 
+
+write.csv(res_tbl,"./data_output/Cytokine_vs_Pitava_Cyto/res_tbl.csv", row.names = T)
+
+# Save the signif genes
+
+overexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange>=0.5) 
+underexpr <- res_tbl %>% filter(padj<=0.05 & log2FoldChange<=-0.5)
+signif <- full_join(overexpr, underexpr)
+
+# write.xlsx(overexpr, file="./data_output/Cytokine_vs_Pitava_Cyto/Sign_genes.xlsx", sheetName="UP")
+# write.xlsx(underexpr, file="./data_output/Cytokine_vs_Pitava_Cyto/Sign_genes.xlsx", sheetName="DOWN", append=TRUE)
+# write.xlsx(signif, file="./data_output/Cytokine_vs_Pitava_Cyto/Sign_genes.xlsx", sheetName="SIGNIF", append=TRUE)
+
 ```
 
 ```{r}

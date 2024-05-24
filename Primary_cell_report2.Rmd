@@ -1,0 +1,559 @@
+---
+title: "Lung primary cells RNAseq for Nick : refining for paper"
+author: "Marion Hardy"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true 
+    theme: spacelab 
+    highlight: monochrome
+editor_options: 
+  chunk_output_type: console
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, cache = TRUE, echo = FALSE, warning = F, cache.lazy = F)
+knitr::opts_chunk$set(fig.width=10, fig.height=15) 
+
+library(RColorBrewer)
+library(DESeq2)
+library(tidyverse)
+library(cowplot)
+library(biomaRt)
+library(ggrepel)
+library(pheatmap)
+library(msigdbr)
+library(clusterProfiler)
+library(kableExtra)
+library(ggvenn)
+
+```
+
+```{r Data loading, include=FALSE}
+
+# this script assumes you have run the DESeq2 script
+
+dds = readRDS("./data_output/dds.Rds")
+
+# Create the cytokine vs double treatment comparison
+
+dds$treatment <- relevel(dds$treatment, "Pitava_Cyto")
+dds <- DESeq(dds)
+
+```
+
+
+# Introduction
+
+Kenneth did RNAseq on lung primary cells.
+
+That data was aligned by the genome center, we have the preliminary
+reports:
+
+-   qc_report_genome_center.html : quality control of the alignment of
+    the data
+
+-   initial_report_genome_center: describes each sample (used for
+    annotations) and did a basic PCA + how many genes are differentially
+    expressed when comparing conditions.
+
+We want to know what pathways/processes changed after different
+treatments. We are specifically interested in seeing why cytokines (IL5,
+IL13, ILxx) induce SPREADS but do not when coupled with pitavastatin.
+
+So ultimately, what is pitavastatin suppressing?
+
+
+```{r}
+
+# MsigDb
+
+hsa_GOBP_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C5",
+  subcategory = "GO:BP")
+
+hsa_GOMF_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C5",
+  subcategory = "GO:MF")
+
+hsa_reactome_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C2",
+  subcategory = "CP:REACTOME") # for reactome collection
+
+hsa_pid_sets <- msigdbr(
+  species = "Homo sapiens", 
+  category = "C2",
+  subcategory = "CP:PID") # for pathway interaction database
+
+set.seed(054057) # for reproducibility
+
+```
+
+# What is in common and what is specific to each conditions?
+
+```{r include=FALSE}
+
+# this script assumes you have run the DESeq2 script
+
+CytCo = read.csv("./data_output/Cytokine_vs_Control/res_tbl.csv")
+PivCo = read.csv("./data_output/Pitavastatin_vs_Control/res_tbl.csv")
+PivCytCo = read.csv("./data_output/PitavaCyto_vs_Control/res_tbl.csv")
+
+```
+
+## Venn diagram
+
+Compare all the differentially expressed genes vs control to each other.
+This plot allows us to know which genes can be found to be perturbed vs
+control in all conditions as well as those that are specific to one
+condition or another.
+
+```{r, fig.width = 4, fig.height=4}
+
+cytco = 
+  CytCo %>% 
+    filter(padj<=0.05, abs(log2FoldChange)>=0)
+
+pivcytco = 
+  PivCytCo %>% 
+    filter(padj<=0.05, abs(log2FoldChange)>=0)
+
+pivco = 
+  PivCo %>% 
+    filter(padj<=0.05, abs(log2FoldChange)>=0)
+
+venn =
+  list(
+    "cytco" = cytco$ensembl,
+    "pivcytco" = pivcytco$ensembl,
+    "pivco" = pivco$ensembl
+  )
+
+ggvenn(
+  venn, 
+  fill_color = c("#0073C2FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 3
+  )
+
+```
+
+
+## UP in cytokine and DOWN in Cyt + Pit
+
+Now let's look at the 1878 + 1402 (3280) genes that are common to
+cytokines and cyto+statin treatments and the 666 + 163 (829) genes that
+look to have changed in cytokines vs ctrl. The hope is to find some that
+are up in cytokine and down or unchanged in statin+cyto vs ctrl. There
+are 11 (up and down) + 366 (up and unchanged) such genes.
+
+```{r}
+
+# common = setdiff(intersect(cytco$gene, pivcytco$gene), pivco$gene)
+
+common = intersect(cytco$ensembl, pivcytco$ensembl)
+
+goi = # Up in cyto vs ctrl
+  cytco %>% 
+  filter(ensembl %in% common, log2FoldChange > 0) %>% 
+  select(ensembl, log2FoldChange,protID, gene, description, padj) 
+
+downpivcytco = # Down in pivcytco
+  pivcytco %>%
+  filter(log2FoldChange < 0, padj<0.05)
+
+goi =
+  goi %>%
+  filter(ensembl %in% downpivcytco$ensembl)%>% 
+  arrange(desc(log2FoldChange))
+
+goi %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+### Heatmap
+
+```{r, fig.width=5, fig.height=6}
+
+reslog = rlog(dds, blind = FALSE)
+mat = assay(reslog)
+
+coldata = as.data.frame(colData(reslog))
+colnames(mat) = rownames(coldata)
+
+# Do the scaling to get z-scores
+
+basemean = rowMeans(mat)
+mats = t(apply(mat, 1, scale))
+colnames(mats) = colnames(mat)
+
+mats = mats[goi$ensembl,]
+rownames(mats) = goi$gene
+colnames(mats) = coldata$treatment
+
+pheatmap(mats, main="11 candidate genes", 
+         cluster_cols=T,border_color=NA, 
+         legend = T,
+         fontsize_row=7,
+         color = rev(brewer.pal(9,"RdBu")))
+
+```
+
+### Enrichment analysis (Over-representation analysis)
+
+#### GOBP
+
+```{r, fig.height=9, fig.width=7}
+
+up = goi$gene
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 20, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "11 genes of interest that may be suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_11_BP.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+```
+
+#### GOMF
+
+```{r, fig.height=8, fig.width=7}
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOMF_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "11 genes of interest that may be suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_11_MF.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+```
+
+## UP in cytokine and UNCHANGED in Cyt + Piv
+
+There are 377 such genes.
+
+```{r}
+
+diff = setdiff(cytco$ensembl, pivcytco$ensembl) # get the cyt-specific genes vs pivcyt
+diff = setdiff(diff, pivco$ensembl) # remove the genes in common with pivco
+
+goi2 = # Up in cyto vs ctrl
+  cytco %>% 
+  filter(ensembl %in% diff, log2FoldChange > 0) %>% 
+  select(ensembl, log2FoldChange,protID, gene, description, padj) %>% 
+  arrange(desc(log2FoldChange))
+
+goi2 %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+There are 377 candidate genes for the suppression of SPREADS through
+pitavastatin treatment.
+
+### Heatmap
+
+```{r, fig.width=7, fig.height=10}
+
+reslog = rlog(dds, blind = FALSE)
+mat = assay(reslog)
+
+coldata = as.data.frame(colData(reslog))
+colnames(mat) = rownames(coldata)
+
+# Do the scaling to get z-scores
+
+basemean = rowMeans(mat)
+mats = t(apply(mat, 1, scale))
+colnames(mats) = colnames(mat)
+
+mats = mats[goi2$ensembl,]
+rownames(mats) = goi2$gene
+colnames(mats) = coldata$treatment
+
+mats = mats[c(1:70),]
+
+pheatmap(mats, main="Top 70/377 candidate genes", 
+         cluster_cols=T,border_color=NA, 
+         legend = T,
+         fontsize_row=7,
+         color = rev(brewer.pal(9,"RdBu")))
+
+```
+
+### Enrichment analysis (Over-representation analysis)
+
+#### GOBP
+
+```{r, fig.height=7, fig.width=7}
+
+up = goi2$gene
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "377 genes of interest that may be suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_377_BP.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+
+ora_results %>% 
+  as_tibble() %>% 
+    select(!c(Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+```
+
+#### GOMF
+
+```{r, fig.height= 6, fig.width=7}
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOMF_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "377 genes of interest that may be suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_377_MF.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+
+ora_results %>% 
+  as_tibble() %>% 
+    select(!c(Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+```
+
+## COMBINE the UP in cytokine with DOWN and UNCHANGED in double treatment
+
+
+Now let's look at the 1878 + 1402 (3280) genes that are common to
+cytokines and cyto+statin treatments and the 666 + 163 (829) genes that
+look to have changed in cytokines vs ctrl. The hope is to find some that
+are up in cytokine and down or unchanged in statin+cyto vs ctrl. There
+are 11 (up and down) + 377 (up and unchanged) such genes.
+
+
+```{r}
+
+toi = full_join(goi, goi2)
+
+toi %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+#### GOBP
+
+```{r, fig.height=10, fig.width=7}
+
+up = toi$gene
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_GOBP_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 30, font.size = 7)+ 
+  labs(title = "Over-representation analysis GO:BP",
+              subtitle = "388 genes of interest that may be suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_388_BP.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+
+ora_results %>% 
+  as_tibble() %>% 
+    select(!c(Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+```
+
+#### Reactome
+
+```{r, fig.height=6, fig.width=7}
+
+up = toi$gene
+
+ora_results <- enricher(
+  gene = up, 
+  pvalueCutoff = 0.05, 
+  pAdjustMethod = "BH", 
+  TERM2GENE = dplyr::select(
+    hsa_reactome_sets,
+    gs_name,
+    gene_symbol
+  )
+)
+
+ora_results %>% 
+  dotplot(showCategory = 40, font.size = 7)+ 
+  labs(title = "Over-representation analysis Reactome",
+              subtitle = "388 genes of interest that may be suppressing SPREADS")+
+   theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+ggsave(plot = last_plot(), "./figures/ORA_388_Reactome.svg", dpi = 300,
+       height = 5, width = 5, device = "svg")
+
+ora_results %>% 
+  as_tibble() %>% 
+    select(!c(Description)) %>% 
+  kable()%>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(width = "1000px", height = "500px")
+
+```
+
+
+## Genes of interest
+
+Based on our growing hypothesis from scanning the previous results, I checked the recent literature about other known or emergent roles of these proteins, which would not appear in an ORA search because the dataset takes some time to be updated.
+I checked for links to ERK/EGFR signaling and TNFa production. Interstingly, most of the proteins that had a log2Fc > 1 in cytokine and were specifically only changing in cytokines and not the double treatment seem to fit our expectations.
+
+
+-   TSPAN8: "We, therefore propose that Tspan8 contributes to
+    tumorigenesis through enhanced ADAM17-mediated TNF α release"
+
+-   HSPA1A: "Exogenous heat shock proteins HSPA1A and HSPB1 regulate
+    TNF-α, IL-1β and IL-10 secretion from monocytic cells"
+
+-   HSP1B: see above
+
+-   EPHA3: "We examined ERK1/2 phosphorylation in both WK1 and U251
+    cells and found that the ERK/MAPK pathway was more highly activated
+    in EphA3 KD cells" "EPHA3 is upregulated by EGF in glioblastoma
+    cells"
+
+-   SMOC2: "TGF-β1/SMOC2/AKT and ERK axis regulates proliferation,
+    migration, and fibroblast to myofibroblast transformation in lung
+    fibroblast, contributing with the asthma progression"
+
+-   IL12RB2: "IL12 and TNFa are two major inflammation mediators in
+    mammals" "[IL-12-dependent activation of ERK1/2 in human
+    T](https://pubmed.ncbi.nlm.nih.gov/19215801/) lymphoblasts"
+
+-   DOK1: "LPLI inhibits ERK phosphorylation through DOK1"
+
+-   HCK: "[Hck tyrosine kinase activity modulates tumor
+    necrosis](https://pubmed.ncbi.nlm.nih.gov/8350043/) factor
+    production by murine macrophages"
+
+-   EGR2: "[Novel pro-survival functions of the
+    Kruppel-lik](https://pubmed.ncbi.nlm.nih.gov/18198176/)e
+    transcription factor Egr2 in promotion of macrophage
+    colony-stimulating factor-mediated osteoclast survival downstream of
+    the MEK/ERK pathway" + "[NFκB and MAPK signalling pathways mediate
+    TNFα](https://pubmed.ncbi.nlm.nih.gov/23485457/)-induced Early
+    Growth Response gene transcription leading to aromatase expression"
+
+-   GPER1: "Treatment GPER1-specific agonist lead to sustained and
+    transient activity of EGF/ERK and EGFR/AKT pathways in [2] HCC cell
+    lines" + "[GPER negatively regulates TNFα-induced IL-6
+    production](https://pubmed.ncbi.nlm.nih.gov/26888479/)"
+
+Other genes of interest, had the highest logFc in cytokine and were
+unchanged in pitcyt 
+
+-   SHISA8: Predicted to be part of AMPA glutamate receptor complex
+
+-   LRRTM2: Regulates surface expression of AMPA receptors and instructs
+    the development of functional glutamate release sites.
+
+-> TNFa induces trafficking of AMPA to mb in CNS neurons
+
+All in all our gene of interest point in
+
+-   OXPHOS-involved proteins are very up in cytokines vs double treatment
+-   TNFa release/production is up
+
+
+```{r}
+sessionInfo()
+```
