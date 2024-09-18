@@ -46,7 +46,7 @@ Out of the 1878 + 1402 DEGs between Cytokine and Pitavastatin + Cytokines vs ctr
 - UP in cytokine
 - DOWN or UNCHANGED in pitavastatin + cytokine vs control
 
-There bare 377 such genes, I produced a heatmap for those and did an ORA.
+There are 377 such genes, I produced a heatmap for those and did an ORA.
 
 
 
